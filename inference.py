@@ -24,6 +24,12 @@ class SafetyDetector:
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
         
+        # Get class names from the model
+        self.class_names = self.model.names
+        print(f"Model loaded with {len(self.class_names)} classes:")
+        for idx, name in self.class_names.items():
+            print(f"  {idx}: {name}")
+        
     def predict_image(self, image_path: str, save_path: str = None, show: bool = False):
         """
         Run inference on a single image
@@ -40,14 +46,15 @@ class SafetyDetector:
             source=image_path,
             conf=self.conf_threshold,
             iou=self.iou_threshold,
-            save=save_path is not None,
+            save=False,  # We'll save manually with better control
             show=show,
             save_txt=False,
             save_conf=True,
+            verbose=False,
         )
         
         if save_path and results:
-            # Save annotated image
+            # Save annotated image with class labels
             annotated = results[0].plot()
             cv2.imwrite(save_path, annotated)
             
@@ -72,6 +79,7 @@ class SafetyDetector:
             save=output_path is not None,
             show=show,
             stream=True,
+            verbose=False,
         )
         
         return results
@@ -147,18 +155,77 @@ class SafetyDetector:
                 class_counts[class_name] = class_counts.get(class_name, 0) + 1
         
         return class_counts
+    
+    def get_detailed_detections(self, results):
+        """
+        Get detailed information about each detection
+        
+        Args:
+            results: Results object from YOLO
+            
+        Returns:
+            List of dictionaries with detection details
+        """
+        if not results or len(results) == 0:
+            return []
+        
+        result = results[0]
+        detections = []
+        
+        if result.boxes:
+            for box in result.boxes:
+                class_id = int(box.cls[0])
+                class_name = result.names[class_id]
+                confidence = float(box.conf[0])
+                bbox = box.xyxy[0].tolist()  # [x1, y1, x2, y2]
+                
+                detections.append({
+                    'class_id': class_id,
+                    'class_name': class_name,
+                    'confidence': confidence,
+                    'bbox': bbox
+                })
+        
+        return detections
+    
+    def print_detections(self, results):
+        """
+        Print detailed detection information
+        
+        Args:
+            results: Results object from YOLO
+        """
+        detections = self.get_detailed_detections(results)
+        
+        if not detections:
+            print("No detections found.")
+            return
+        
+        print(f"\nFound {len(detections)} detection(s):")
+        print("-" * 70)
+        for i, det in enumerate(detections, 1):
+            print(f"{i}. {det['class_name']}")
+            print(f"   Confidence: {det['confidence']:.2%}")
+            print(f"   BBox: [{det['bbox'][0]:.1f}, {det['bbox'][1]:.1f}, {det['bbox'][2]:.1f}, {det['bbox'][3]:.1f}]")
+        print("-" * 70)
+        
+        # Print summary
+        summary = self.get_detection_summary(results)
+        print("\nSummary:")
+        for class_name, count in summary.items():
+            print(f"  {class_name}: {count}")
 
 
 def main():
     parser = argparse.ArgumentParser(description='YOLO Safety Detection Inference')
     parser.add_argument('--model', type=str, 
-                       default='yolo12_run_3/yolo_runs/yolo12_run_3/weights/best.pt',
+                       default='yolo12_training/yolo_runs/yolo12_run_3/weights/best.pt',
                        help='Path to model weights')
     parser.add_argument('--source', type=str, required=True,
                        help='Path to image, video, directory, or webcam (use "0" for webcam)')
     parser.add_argument('--output', type=str, default='output',
                        help='Output directory for results')
-    parser.add_argument('--conf', type=float, default=0.25,
+    parser.add_argument('--conf', type=float, default=0.2,
                        help='Confidence threshold')
     parser.add_argument('--iou', type=float, default=0.7,
                        help='IOU threshold for NMS')
@@ -192,9 +259,9 @@ def main():
             save_path = str(output_path / f"result_{Path(source).name}")
             results = detector.predict_image(source, save_path=save_path, show=args.show)
             
-            summary = detector.get_detection_summary(results)
-            print(f"\nDetections: {summary}")
-            print(f"Result saved to: {save_path}")
+            # Print detailed detections with class names
+            detector.print_detections(results)
+            print(f"\n✓ Result saved to: {save_path}")
         
         elif ext in ['.mp4', '.avi', '.mov', '.mkv']:
             # Video
@@ -204,7 +271,8 @@ def main():
             for i, r in enumerate(results_gen):
                 if i % 30 == 0:  # Print every 30 frames
                     summary = detector.get_detection_summary([r])
-                    print(f"Frame {i}: {summary}")
+                    if summary:
+                        print(f"Frame {i}: {summary}")
     
     elif Path(source).is_dir():
         # Directory of images

@@ -1,3 +1,7 @@
 .vscode/
 yolo12_run_1/
 yolo12_run_2/
+__pycache__/
+.DS_Store
+.ipynb_checkpoints/
+.env
